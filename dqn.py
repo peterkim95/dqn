@@ -1,0 +1,217 @@
+import gym
+import math
+import random
+import numpy as np
+
+from collections import namedtuple, deque
+from tqdm import trange
+
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+import torchvision.transforms as T
+from torch.utils.tensorboard import SummaryWriter
+
+Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
+
+class ReplayMemory(object):
+    def __init__(self, capacity):
+        self.memory = deque([], maxlen=capacity)
+        # deque: Doubly Ended Queue
+    
+    def push(self, *args):
+        '''Save a transition'''
+        self.memory.append(Transition(*args))
+    
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
+
+
+env = gym.make('CartPole-v0')
+env.reset()
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+transform = T.Compose([T.ToTensor()])
+'''
+ToTensor():
+Converts a PIL Image or numpy.ndarray (H x W x C) in the range [0, 255] to a torch.FloatTensor of shape (C x H x W) in the range [0.0, 1.0] 
+'''
+
+def get_screen():
+    rgb_array = env.render(mode='rgb_array').copy()
+    if rgb_array.shape == (800, 1200, 3):
+        rgb_array = np.resize(rgb_array, (400, 600, 3))
+    assert rgb_array.shape == (400, 600, 3)
+    return transform(rgb_array).unsqueeze(0)
+    
+
+class DQN(nn.Module):
+    '''
+    conv2d: (N, C, H, W) -> (N, C_out, H_out, W_out)
+    '''
+    def __init__(self, h, w, outputs):
+        super(DQN, self).__init__()
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=5, stride=2)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=2)
+        self.bn2 = nn.BatchNorm2d(32)
+        self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
+        self.bn3 = nn.BatchNorm2d(32)
+
+        def conv2d_size_out(size, kernel_size=5, stride=2):
+            return (size - (kernel_size - 1) - 1) // stride + 1
+        convw = conv2d_size_out(conv2d_size_out(conv2d_size_out(w)))
+        convh = conv2d_size_out(conv2d_size_out(conv2d_size_out(h)))
+        linear_input_size = convw * convh * 32
+        self.head = nn.Linear(linear_input_size, outputs)
+    
+    def forward(self, x):
+        x = x.to(device)
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
+        return self.head(x.view(x.size(0), -1))
+
+
+UPDATES_PER_EPOCH = 50
+BATCH_SIZE = 128
+GAMMA = 0.999
+EPS_START = 0.9
+EPS_END = 0.05
+EPS_DECAY = 200
+TARGET_UPDATE = 10
+
+# Get screen size so that we can initialize layers correctly based on shape
+# returned from AI gym. Typical dimensions at this point are close to 3x40x90
+# which is the result of a clamped and down-scaled render buffer in get_screen()
+# init_screen = get_screen()
+# _, _, screen_height, screen_width = init_screen.shape
+screen_height, screen_width = 400, 600
+
+# Get number of actions from gym action space
+n_actions = env.action_space.n
+
+policy_net = DQN(screen_height, screen_width, n_actions).to(device)
+target_net = DQN(screen_height, screen_width, n_actions).to(device)
+target_net.load_state_dict(policy_net.state_dict())
+target_net.eval()
+
+optimizer = optim.RMSprop(policy_net.parameters())
+memory = ReplayMemory(10000)
+
+
+steps_done = 0
+
+updates_done = 0
+
+
+writer = SummaryWriter()
+episode_rewards = []
+
+num_episodes = 50
+
+
+def select_action(state):
+    global steps_done
+    eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * steps_done / EPS_DECAY)
+    steps_done += 1
+    if random.random() >= eps_threshold:
+        return policy_net(state).max(1)[1].view(1,1) # Use policy net here...to decide best action so far
+    else:
+        return torch.tensor([[random.randrange(n_actions)]], device=device, dtype=torch.long)
+
+
+
+def optimize_model():
+    if len(memory) < BATCH_SIZE:
+        return
+    transitions = memory.sample(BATCH_SIZE)
+    
+    batch = Transition(*zip(*transitions)) # concatenated along field axes
+    
+    non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+                                          batch.next_state)), device=device, dtype=torch.bool)
+    non_final_next_states = torch.cat([s for s in batch.next_state
+                                                if s is not None])
+    state_batch = torch.cat(batch.state).to(device)
+    action_batch = torch.cat(batch.action).to(device)
+    reward_batch = torch.cat(batch.reward).to(device)
+    
+    # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
+    # columns of actions taken. These are the actions which would've been taken
+    # for each batch state according to policy_net
+    state_action_values = policy_net(state_batch).gather(1, action_batch)
+
+    # Compute V(s_{t+1}) for all next states.
+    # Expected values of actions for non_final_next_states are computed based
+    # on the "older" target_net; selecting their best reward with max(1)[0].
+    # This is merged based on the mask, such that we'll have either the expected
+    # state value or 0 in case the state was final.
+    next_state_values = torch.zeros(BATCH_SIZE, device=device)
+    next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0].detach()
+    next_state_values = next_state_values.unsqueeze(1)
+    # Compute the expected Q values
+    expected_state_action_values = (next_state_values * GAMMA) + reward_batch
+
+    # Compute Huber loss
+    criterion = nn.SmoothL1Loss()
+    loss = criterion(state_action_values, expected_state_action_values)
+
+    # Optimize the model
+    optimizer.zero_grad()
+    loss.backward()
+    for param in policy_net.parameters():
+        param.grad.data.clamp_(-1, 1)
+    optimizer.step()
+
+
+for i_episode in trange(num_episodes):
+    env.reset()
+
+    state = get_screen() - get_screen() # dummy state
+    episode_reward = 0
+    while True:
+        action = select_action(state)
+        
+        previous_screen = get_screen()
+        _, reward, done, _ = env.step(action.item())
+
+        episode_reward += reward
+        
+        if not done:
+            next_state = get_screen() - previous_screen
+        else:
+            next_state = None
+        
+        memory.push(state, action, next_state, torch.tensor([[reward]]))
+        
+        state = next_state
+        
+        optimize_model()
+
+        updates_done += 1
+
+        if updates_done % UPDATES_PER_EPOCH == 0:
+            epoch = updates_done // UPDATES_PER_EPOCH
+            avg_reward = np.mean(episode_rewards)
+            # global avg_reward
+            # avg_reward = avg_reward + (episode_reward - avg_reward) / (epoch + 1)
+            # plot_reward(epoch, avg_reward)
+            writer.add_scalar('Avg. Reward/cartpole', avg_reward, epoch)
+
+        if done:
+            episode_rewards.append(episode_reward)
+            break
+        
+    if i_episode % TARGET_UPDATE == 0:
+        target_net.load_state_dict(policy_net.state_dict())
+
+    if i_episode % 50 == 0:
+        torch.save(policy_net.state_dict(), f'cartpole_e{i_episode}.pt')
