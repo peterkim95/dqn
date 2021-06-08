@@ -2,6 +2,7 @@ import gym
 import math
 import random
 import numpy as np
+import gc
 
 from collections import namedtuple, deque
 from tqdm import trange
@@ -127,7 +128,8 @@ def select_action(state):
     eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * steps_done / EPS_DECAY)
     steps_done += 1
     if random.random() >= eps_threshold:
-        return policy_net(state).max(1)[1].view(1,1) # Use policy net here...to decide best action so far
+        with torch.no_grad():
+            return policy_net(state).max(1)[1].view(1,1) # Use policy net here...to decide best action so far
     else:
         return torch.tensor([[random.randrange(n_actions)]], device=device, dtype=torch.long)
 
@@ -143,7 +145,7 @@ def optimize_model():
     non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                           batch.next_state)), device=device, dtype=torch.bool)
     non_final_next_states = torch.cat([s for s in batch.next_state
-                                                if s is not None])
+                                                if s is not None]).to(device)
     state_batch = torch.cat(batch.state).to(device)
     action_batch = torch.cat(batch.action).to(device)
     reward_batch = torch.cat(batch.reward).to(device)
