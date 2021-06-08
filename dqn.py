@@ -38,19 +38,19 @@ env.reset()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-transform = T.Compose([T.ToTensor()])
+transform = T.Compose([T.ToTensor(), T.Resize((400, 600))])
 '''
 ToTensor():
 Converts a PIL Image or numpy.ndarray (H x W x C) in the range [0, 255] to a torch.FloatTensor of shape (C x H x W) in the range [0.0, 1.0] 
 '''
 
 def get_screen():
-    rgb_array = env.render(mode='rgb_array').copy()
-    if rgb_array.shape == (800, 1200, 3):
-        rgb_array = np.resize(rgb_array, (400, 600, 3))
-    assert rgb_array.shape == (400, 600, 3)
-    return transform(rgb_array).unsqueeze(0)
-    
+    rgb_array = np.ascontiguousarray(env.render(mode='rgb_array'), dtype=np.float32)
+    # if rgb_array.shape == (800, 1200, 3):
+    #     rgb_array = np.resize(rgb_array, (400, 600, 3))
+    rgb_tensor = transform(rgb_array).to(device).unsqueeze(0)
+    return rgb_tensor
+
 
 class DQN(nn.Module):
     '''
@@ -184,13 +184,14 @@ for i_episode in trange(num_episodes):
         _, reward, done, _ = env.step(action.item())
 
         episode_reward += reward
+        reward = torch.tensor([[reward]], device=device)
         
         if not done:
             next_state = get_screen() - previous_screen
         else:
             next_state = None
         
-        memory.push(state, action, next_state, torch.tensor([[reward]]))
+        memory.push(state, action, next_state, reward)
         
         state = next_state
         
