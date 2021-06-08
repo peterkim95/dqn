@@ -15,9 +15,9 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from torch.utils.tensorboard import SummaryWriter
 
-from pyvirtualdisplay import Display
-dis = Display(visible=0, size=(1000, 1000))
-dis.start()
+# from pyvirtualdisplay import Display
+# dis = Display(visible=0, size=(1000, 1000))
+# dis.start()
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
@@ -180,25 +180,25 @@ def optimize_model():
         param.grad.data.clamp_(-1, 1)
     optimizer.step()
 
-    del batch
-
 
 for i_episode in trange(num_episodes):
     env.reset()
 
-    state = get_screen() - get_screen() # dummy state
+    current_screen, last_screen = get_screen(), get_screen()
+    state = current_screen - last_screen # dummy state
+
     episode_reward = 0
     while True:
         action = select_action(state)
         
-        previous_screen = get_screen()
         _, reward, done, _ = env.step(action.item())
-
         episode_reward += reward
         reward = torch.tensor([[reward]], device=device)
-        
+
+        last_screen = current_screen
+        current_screen = get_screen()
         if not done:
-            next_state = get_screen() - previous_screen
+            next_state = current_screen - last_screen
         else:
             next_state = None
         
@@ -222,12 +222,6 @@ for i_episode in trange(num_episodes):
             episode_rewards.append(episode_reward)
             break
 
-        # let it go
-        del action
-        del reward
-        del next_state
-
-
     if i_episode % TARGET_UPDATE == 0:
         target_net.load_state_dict(policy_net.state_dict())
 
@@ -237,4 +231,4 @@ for i_episode in trange(num_episodes):
 print('if you see this for reals then you made it')
 env.render()
 env.close()
-dis.stop()
+# dis.stop()
