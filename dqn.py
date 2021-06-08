@@ -23,11 +23,14 @@ Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'
 
 class ReplayMemory(object):
     def __init__(self, capacity):
+        self.capacity = capacity
         self.memory = deque([], maxlen=capacity)
         # deque: Doubly Ended Queue
     
     def push(self, *args):
         '''Save a transition'''
+        if len(self.memory) == self.capacity:
+            print('max memory reached, will pop n lock')
         self.memory.append(Transition(*args))
     
     def sample(self, batch_size):
