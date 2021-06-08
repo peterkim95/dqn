@@ -234,4 +234,7 @@ for i_episode in trange(num_episodes):
     if i_episode % 50 == 0:
         torch.save(policy_net.state_dict(), f'cartpole_e{i_episode}.pt')
 
+print('if you see this for reals then you made it')
+env.render()
+env.close()
 dis.stop()
