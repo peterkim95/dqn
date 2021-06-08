@@ -15,9 +15,9 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from torch.utils.tensorboard import SummaryWriter
 
-# from pyvirtualdisplay import Display
-# dis = Display(visible=0, size=(1000, 1000))
-# dis.start()
+from pyvirtualdisplay import Display
+dis = Display(visible=0, size=(1000, 1000))
+dis.start()
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
@@ -231,4 +231,4 @@ for i_episode in trange(num_episodes):
 print('if you see this for reals then you made it')
 env.render()
 env.close()
-# dis.stop()
+dis.stop()
