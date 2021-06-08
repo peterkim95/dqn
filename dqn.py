@@ -14,6 +14,10 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from torch.utils.tensorboard import SummaryWriter
 
+from pyvirtualdisplay import Display
+dis = Display(visible=0, size=(1000, 1000))
+dis.start()
+
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
 class ReplayMemory(object):
@@ -115,7 +119,7 @@ updates_done = 0
 writer = SummaryWriter()
 episode_rewards = []
 
-num_episodes = 50
+num_episodes = 2000
 
 
 def select_action(state):
@@ -210,9 +214,11 @@ for i_episode in trange(num_episodes):
         if done:
             episode_rewards.append(episode_reward)
             break
-        
+
     if i_episode % TARGET_UPDATE == 0:
         target_net.load_state_dict(policy_net.state_dict())
 
     if i_episode % 50 == 0:
         torch.save(policy_net.state_dict(), f'cartpole_e{i_episode}.pt')
+
+dis.stop()
