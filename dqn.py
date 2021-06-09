@@ -2,11 +2,12 @@ import gym
 import math
 import random
 import numpy as np
+import sys
 import gc
 
 from collections import namedtuple, deque
 from tqdm import trange
-
+from PIL import Image
 
 import torch
 import torch.nn as nn
@@ -15,9 +16,10 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from torch.utils.tensorboard import SummaryWriter
 
-from pyvirtualdisplay import Display
-dis = Display(visible=0, size=(1000, 1000))
-dis.start()
+if sys.argv[1] == 'ec2':
+    from pyvirtualdisplay import Display
+    dis = Display(visible=0, size=(1000, 1000))
+    dis.start()
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
@@ -40,7 +42,7 @@ class ReplayMemory(object):
         return len(self.memory)
 
 
-env = gym.make('CartPole-v0')
+env = gym.make('CartPole-v0').unwrapped
 env.reset()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -52,12 +54,44 @@ ToTensor():
 Converts a PIL Image or numpy.ndarray (H x W x C) in the range [0, 255] to a torch.FloatTensor of shape (C x H x W) in the range [0.0, 1.0] 
 '''
 
+resize = T.Compose([T.ToPILImage(),
+                    T.Resize(40, interpolation=Image.CUBIC),
+                    T.ToTensor()])
+
+def get_cart_location(screen_width):
+    world_width = env.x_threshold * 2
+    scale = screen_width / world_width
+    return int(env.state[0] * scale + screen_width / 2.0)  # MIDDLE OF CART
+
 def get_screen():
-    rgb_array = np.ascontiguousarray(env.render(mode='rgb_array'), dtype=np.float32)
-    # if rgb_array.shape == (800, 1200, 3):
-    #     rgb_array = np.resize(rgb_array, (400, 600, 3))
-    rgb_tensor = transform(rgb_array).to(device).unsqueeze(0)
-    return rgb_tensor
+    screen = env.render(mode='rgb_array').transpose((2, 0, 1))
+    # Cart is in the lower half, so strip off the top and bottom of the screen
+    _, screen_height, screen_width = screen.shape
+    screen = screen[:, int(screen_height*0.4):int(screen_height * 0.8)]
+    view_width = int(screen_width * 0.6)
+    cart_location = get_cart_location(screen_width)
+    if cart_location < view_width // 2:
+        slice_range = slice(view_width)
+    elif cart_location > (screen_width - view_width // 2):
+        slice_range = slice(-view_width, None)
+    else:
+        slice_range = slice(cart_location - view_width // 2,
+                            cart_location + view_width // 2)
+    # Strip off the edges, so that we have a square image centered on a cart
+    screen = screen[:, :, slice_range]
+    # Convert to float, rescale, convert to torch tensor
+    # (this doesn't require a copy)
+    screen = np.ascontiguousarray(screen, dtype=np.float32) / 255
+    screen = torch.from_numpy(screen)
+    # Resize, and add a batch dimension (BCHW)
+    return resize(screen).unsqueeze(0)
+
+# def get_screen():
+#     rgb_array = np.ascontiguousarray(env.render(mode='rgb_array'), dtype=np.float32)
+#     # if rgb_array.shape == (800, 1200, 3):
+#     #     rgb_array = np.resize(rgb_array, (400, 600, 3))
+#     rgb_tensor = transform(rgb_array).to(device).unsqueeze(0)
+#     return rgb_tensor
 
 
 class DQN(nn.Module):
@@ -99,9 +133,9 @@ TARGET_UPDATE = 10
 # Get screen size so that we can initialize layers correctly based on shape
 # returned from AI gym. Typical dimensions at this point are close to 3x40x90
 # which is the result of a clamped and down-scaled render buffer in get_screen()
-# init_screen = get_screen()
-# _, _, screen_height, screen_width = init_screen.shape
-screen_height, screen_width = 400, 600
+init_screen = get_screen()
+_, _, screen_height, screen_width = init_screen.shape
+# screen_height, screen_width = 400, 600
 
 # Get number of actions from gym action space
 n_actions = env.action_space.n
@@ -234,4 +268,4 @@ for i_episode in trange(num_episodes):
 print('if you see this for reals then you made it')
 env.render()
 env.close()
-dis.stop()
+# dis.stop()
