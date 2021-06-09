@@ -263,7 +263,7 @@ for i_episode in trange(num_episodes):
     if i_episode % TARGET_UPDATE == 0:
         target_net.load_state_dict(policy_net.state_dict())
 
-    if i_episode % 50 == 0:
+    if i_episode % 500 == 0:
         torch.save(policy_net.state_dict(), f'cartpole_e{i_episode}.pt')
 
     print(f'epsilon: {current_epsilon}')
