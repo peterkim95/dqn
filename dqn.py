@@ -125,7 +125,7 @@ BATCH_SIZE = 128
 GAMMA = 0.999
 EPS_START = 0.9
 EPS_END = 0.05
-EPS_DECAY = 200
+EPS_DECAY = 1000
 TARGET_UPDATE = 10
 
 # Get screen size so that we can initialize layers correctly based on shape
@@ -155,13 +155,16 @@ updates_done = 0
 writer = SummaryWriter()
 episode_rewards = []
 
-num_episodes = 2000
+num_episodes = 10000
 
+current_epsilon = None
 
 def select_action(state):
     global steps_done
     eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * steps_done / EPS_DECAY)
     steps_done += 1
+    global current_epsilon
+    current_epsilon = eps_threshold
     if random.random() >= eps_threshold:
         with torch.no_grad():
             return policy_net(state).max(1)[1].view(1,1) # Use policy net here...to decide best action so far
@@ -262,6 +265,8 @@ for i_episode in trange(num_episodes):
 
     if i_episode % 50 == 0:
         torch.save(policy_net.state_dict(), f'cartpole_e{i_episode}.pt')
+
+    print(f'epsilon: {current_epsilon}')
 
 print('if you see this for reals then you made it')
 env.render()
