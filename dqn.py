@@ -31,8 +31,6 @@ class ReplayMemory(object):
     
     def push(self, *args):
         '''Save a transition'''
-        if len(self.memory) == self.capacity:
-            print('max memory reached, will pop n lock')
         self.memory.append(Transition(*args))
     
     def sample(self, batch_size):
@@ -82,7 +80,7 @@ def get_screen():
     # Convert to float, rescale, convert to torch tensor
     # (this doesn't require a copy)
     screen = np.ascontiguousarray(screen, dtype=np.float32) / 255
-    screen = torch.from_numpy(screen)
+    screen = torch.from_numpy(screen, device=device)
     # Resize, and add a batch dimension (BCHW)
     return resize(screen).unsqueeze(0)
 
